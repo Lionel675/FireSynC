@@ -1,0 +1,334 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0"/>
+  <title>FireSync – Inspections (Auth + Roles)</title>
+  <style>
+    body{font-family:system-ui,Segoe UI,Arial;padding:24px;max-width:980px;margin:auto;}
+    h1{margin:0 0 6px}
+    h2{margin:18px 0 8px}
+    .grid{display:grid;gap:10px}
+    .two{grid-template-columns:1fr 1fr}
+    .three{grid-template-columns:repeat(3,1fr)}
+    input,select,textarea,button{padding:8px;border:1px solid #ccc;border-radius:8px}
+    textarea{min-height:70px}
+    table{border-collapse:collapse;width:100%;margin-top:18px}
+    th,td{border:1px solid #e5e5e5;padding:8px;text-align:left;font-size:14px}
+    th{background:#fafafa}
+    .ok{color:#137333}
+    .err{color:#b3261e}
+    #authBar{display:none;gap:10px;align-items:center;margin:8px 0 16px}
+    #inspectionForm{display:none;margin-top:10px;padding:12px;border:1px solid #ddd;border-radius:10px}
+    #adminPanel{display:none;margin-top:16px;padding:12px;border:1px dashed #aaa;border-radius:10px}
+    .muted{color:#666}
+  </style>
+</head>
+<body>
+  <h1>FireSync</h1>
+  <div id="status" class="muted">Only signed-in users can use the app.</div>
+
+  <!-- ===== Login / Signup ===== -->
+  <div id="authArea">
+    <h2>Access</h2>
+    <div class="grid two" style="align-items:end">
+      <div class="grid">
+        <strong>Login</strong>
+        <input id="email" type="email" placeholder="Email" />
+        <input id="password" type="password" placeholder="Password" />
+        <div class="grid two">
+          <button id="loginBtn">Sign In</button>
+          <button id="googleBtn">Google Sign-In</button>
+        </div>
+      </div>
+      <div class="grid">
+        <strong>Sign Up</strong>
+        <input id="suName" placeholder="Display name" />
+        <input id="suEmail" type="email" placeholder="Email" />
+        <input id="suPass" type="password" placeholder="Password (min 6)" />
+        <button id="signupBtn">Create Account</button>
+      </div>
+    </div>
+    <p id="authMsg"></p>
+  </div>
+
+  <!-- ===== Signed-in bar ===== -->
+  <div id="authBar">
+    <span id="who"></span>
+    <span class="muted">|</span>
+    <span>Role: <strong id="roleLabel">…</strong></span>
+    <button id="logoutBtn">Logout</button>
+  </div>
+
+  <!-- ===== Inspection form (visible after login) ===== -->
+  <form id="inspectionForm" autocomplete="on" class="grid three">
+    <div class="grid"><label>Inspector</label><input id="inspector" required placeholder="e.g., Lionel"/></div>
+    <div class="grid"><label>Address</label><input id="address" required placeholder="123 Main St"/></div>
+    <div class="grid"><label>Unit</label><input id="unit" placeholder="Apt 4B"/></div>
+
+    <div class="grid"><label>City</label><input id="city" required placeholder="Ottawa"/></div>
+    <div class="grid"><label>Province/State</label><input id="province" required placeholder="ON"/></div>
+    <div class="grid"><label>Postal/ZIP</label><input id="postal" placeholder="K1A 0B1"/></div>
+
+    <div class="grid"><label>Status</label>
+      <select id="statusField" required>
+        <option value="">-- choose --</option>
+        <option>Passed</option>
+        <option>Failed</option>
+        <option>Follow-up Needed</option>
+      </select>
+    </div>
+    <div class="grid"><label>Smoke Alarm</label>
+      <select id="smoke" required>
+        <option value="">-- choose --</option>
+        <option>Yes</option>
+        <option>No</option>
+        <option>Unknown</option>
+      </select>
+    </div>
+    <div class="grid" style="grid-column:1/-1">
+      <label>Notes</label><textarea id="notes" placeholder="Observations, hazards, photos link..."></textarea>
+    </div>
+
+    <button type="submit" style="grid-column:1/-1">Save Inspection</button>
+  </form>
+
+  <h2>Recent Inspections</h2>
+  <table id="inspectionsTable">
+    <thead><tr>
+      <th>When</th><th>Inspector</th><th>Address</th><th>Status</th><th>Smoke</th><th>Notes</th>
+    </tr></thead>
+    <tbody></tbody>
+  </table>
+
+  <!-- ===== Admin panel (admins only) ===== -->
+  <div id="adminPanel">
+    <strong>Admin Tools</strong>
+    <p class="muted">Set roles by <em>User UID</em>. (Find a user’s UID in Firebase Console → Authentication → Users.)</p>
+    <div class="grid two">
+      <input id="roleUid" placeholder="Target UID"/>
+      <select id="roleValue">
+        <option value="inspector">inspector</option>
+        <option value="admin">admin</option>
+      </select>
+    </div>
+    <button id="setRoleBtn">Set Role</button>
+    <p id="adminMsg"></p>
+  </div>
+
+  <!-- ===== Firebase (CDN) ===== -->
+  <script type="module">
+   import { initializeApp } from "https://www.gstatic.com/firebasejs/11.0.1/firebase-app.js";
+import { getAuth, ... } from "https://www.gstatic.com/firebasejs/11.0.1/firebase-auth.js";
+import { getDatabase, ... } from "https://www.gstatic.com/firebasejs/11.0.1/firebase-database.js";
+
+const firebaseConfig = { ... }; // <— your copied config
+const app = initializeApp(firebaseConfig); // MUST be before getAuth/getDatabase
+const auth = getAuth(app);
+const db = getDatabase(app);
+
+    import {
+      getDatabase, ref, push, set, serverTimestamp,
+      onValue, query, limitToLast, get, child, update
+    } from "https://www.gstatic.com/firebasejs/11.0.1/firebase-database.js";
+    import {
+      getAuth, signInWithEmailAndPassword, signInWithPopup, GoogleAuthProvider,
+      onAuthStateChanged, signOut, createUserWithEmailAndPassword, updateProfile
+    } from "https://www.gstatic.com/firebasejs/11.0.1/firebase-auth.js";
+
+    // --- Config ---
+    const firebaseConfig = {
+      apiKey: "AIzaSyBadst_lPQeAFM-zsnCRsBeLC-siE-FY04",
+      authDomain: "firesync-84fdf.firebaseapp.com",
+      databaseURL: "https://firesync-84fdf-default-rtdb.firebaseio.com",
+      projectId: "firesync-84fdf",
+      storageBucket: "firesync-84fdf.firebasestorage.app",
+      messagingSenderId: "420471215291",
+      appId: "1:420471215291:web:73bbe8ffdc33f32de0059e"
+    };
+
+    const app  = initializeApp(firebaseConfig);
+    const db   = getDatabase(app);
+    const auth = getAuth(app);
+    const provider = new GoogleAuthProvider();
+
+    // --- Elements ---
+    const statusEl = document.getElementById('status');
+    const authArea = document.getElementById('authArea');
+    const authBar  = document.getElementById('authBar');
+    const who      = document.getElementById('who');
+    const roleLabel= document.getElementById('roleLabel');
+
+    const loginBtn = document.getElementById('loginBtn');
+    const googleBtn= document.getElementById('googleBtn');
+    const emailEl  = document.getElementById('email');
+    const passEl   = document.getElementById('password');
+    const authMsg  = document.getElementById('authMsg');
+
+    const signupBtn= document.getElementById('signupBtn');
+    const suName   = document.getElementById('suName');
+    const suEmail  = document.getElementById('suEmail');
+    const suPass   = document.getElementById('suPass');
+
+    const logoutBtn= document.getElementById('logoutBtn');
+    const form     = document.getElementById('inspectionForm');
+
+    const adminPanel = document.getElementById('adminPanel');
+    const roleUid    = document.getElementById('roleUid');
+    const roleValue  = document.getElementById('roleValue');
+    const setRoleBtn = document.getElementById('setRoleBtn');
+    const adminMsg   = document.getElementById('adminMsg');
+
+    // --- Helpers ---
+    async function getRole(uid) {
+      const snap = await get(child(ref(db), `roles/${uid}`));
+      return snap.exists() ? snap.val() : null;
+    }
+    function setSignedInUI(user, role) {
+      authArea.style.display = 'none';
+      authBar.style.display  = 'flex';
+      form.style.display     = 'grid';
+      who.textContent = `Signed in as ${user.email ?? user.displayName ?? 'user'}`;
+      roleLabel.textContent = role ?? '(none)';
+      adminPanel.style.display = role === 'admin' ? 'block' : 'none';
+      statusEl.textContent = role === 'admin'
+        ? 'Admin privileges active.'
+        : 'Signed in. You can submit and view inspections.';
+      statusEl.className = '';
+    }
+    function setSignedOutUI() {
+      authArea.style.display = 'block';
+      authBar.style.display  = 'none';
+      form.style.display     = 'none';
+      adminPanel.style.display = 'none';
+      roleLabel.textContent = '…';
+      who.textContent = '';
+      statusEl.textContent = 'Only signed-in users can use the app.';
+      statusEl.className = 'muted';
+    }
+
+    // --- Sign Up: default role = "inspector" ---
+    signupBtn.onclick = async () => {
+      authMsg.textContent = '';
+      try {
+        const cred = await createUserWithEmailAndPassword(auth, suEmail.value, suPass.value);
+        await updateProfile(cred.user, { displayName: suName.value || null });
+        // Create user profile and default role
+        await set(ref(db, `users/${cred.user.uid}`), {
+          displayName: suName.value || null,
+          email: suEmail.value,
+          createdAt: serverTimestamp()
+        });
+        await set(ref(db, `roles/${cred.user.uid}`), 'inspector'); // default
+        authMsg.textContent = 'Account created. You are signed in as inspector.';
+        authMsg.className = 'ok';
+      } catch (e) {
+        authMsg.textContent = e.message;
+        authMsg.className = 'err';
+      }
+    };
+
+    // --- Login: Email/Password + Google ---
+    loginBtn.onclick = async () => {
+      authMsg.textContent = '';
+      try { await signInWithEmailAndPassword(auth, emailEl.value, passEl.value); }
+      catch (e) { authMsg.textContent = e.message; authMsg.className = 'err'; }
+    };
+    googleBtn.onclick = async () => {
+      authMsg.textContent = '';
+      try {
+        const { user } = await signInWithPopup(auth, provider);
+        // If first time Google sign-in, ensure role default exists
+        const role = await getRole(user.uid);
+        if (!role) {
+          await set(ref(db, `users/${user.uid}`), {
+            displayName: user.displayName || null,
+            email: user.email || null,
+            createdAt: serverTimestamp()
+          });
+          await set(ref(db, `roles/${user.uid}`), 'inspector');
+        }
+      } catch (e) { authMsg.textContent = e.message; authMsg.className = 'err'; }
+    };
+    logoutBtn.onclick = () => signOut(auth);
+
+    // --- Auth state & role fetch ---
+    onAuthStateChanged(auth, async (user) => {
+      if (!user) return setSignedOutUI();
+      try {
+        const role = await getRole(user.uid);
+        setSignedInUI(user, role);
+      } catch {
+        setSignedInUI(user, null);
+      }
+    });
+
+    // --- Save inspection ---
+    form.addEventListener('submit', async (e) => {
+      e.preventDefault();
+      statusEl.textContent = "Saving...";
+      statusEl.className = "";
+      const u = auth.currentUser;
+      const data = {
+        inspector: document.getElementById('inspector').value.trim(),
+        address:   document.getElementById('address').value.trim(),
+        unit:      document.getElementById('unit').value.trim(),
+        city:      document.getElementById('city').value.trim(),
+        province:  document.getElementById('province').value.trim(),
+        postal:    document.getElementById('postal').value.trim(),
+        status:    document.getElementById('statusField').value,
+        smokeAlarm:document.getElementById('smoke').value,
+        notes:     document.getElementById('notes').value.trim(),
+        createdAt: serverTimestamp(),
+        uid:       u?.uid || null
+      };
+      if (!data.inspector || !data.address || !data.city || !data.province || !data.status || !data.smokeAlarm) {
+        statusEl.textContent = "Please fill all required fields."; statusEl.className = "err"; return;
+      }
+      try {
+        const newRef = push(ref(db, "inspections"));
+        await set(newRef, data);
+        statusEl.textContent = "Saved ✔"; statusEl.className = "ok"; form.reset();
+      } catch (err) {
+        statusEl.textContent = "Save failed: " + err.message; statusEl.className = "err";
+      }
+    });
+
+    // --- Live table (read last 25) ---
+    const tbody = document.querySelector('#inspectionsTable tbody');
+    onValue(query(ref(db, "inspections"), limitToLast(25)), (snap) => {
+      const rows = [];
+      snap.forEach(child => {
+        const v = child.val();
+        const when = v.createdAt ? new Date(v.createdAt).toLocaleString() : '';
+        rows.push(`
+          <tr>
+            <td>${when}</td>
+            <td>${v.inspector ?? ""}</td>
+            <td>${[v.address, v.unit].filter(Boolean).join(" ")} ${[v.city, v.province, v.postal].filter(Boolean).join(", ")}</td>
+            <td>${v.status ?? ""}</td>
+            <td>${v.smokeAlarm ?? ""}</td>
+            <td>${(v.notes ?? "").replace(/</g,"&lt;")}</td>
+          </tr>`);
+      });
+      tbody.innerHTML = rows.reverse().join("");
+    });
+
+    // --- Admin: set role by UID ---
+    setRoleBtn.onclick = async () => {
+      adminMsg.textContent = '';
+      const currentUser = auth.currentUser;
+      const myRole = await getRole(currentUser.uid);
+      if (myRole !== 'admin') {
+        adminMsg.textContent = 'Only admin can set roles.'; adminMsg.className = 'err'; return;
+      }
+      try {
+        await set(ref(db, `roles/${roleUid.value.trim()}`), roleValue.value);
+        adminMsg.textContent = 'Role updated.'; adminMsg.className = 'ok';
+      } catch (e) {
+        adminMsg.textContent = e.message; adminMsg.className = 'err';
+      }
+    };
+  </script>
+</body>
+</html>
